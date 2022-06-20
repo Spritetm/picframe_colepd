@@ -1,0 +1,4 @@
+
+For PCB:
+XR1151 - 800'ish mA, 65uA quiescent -> 3.5 year
+ESP32C3 - need to test if works with same code, otherwise NP
