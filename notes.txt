@@ -1,0 +1,19 @@
+
+For PCB:
+XR1151 - 800'ish mA, 65uA quiescent -> 3.5 year
+ESP32C3 - need to test if works with same code, otherwise NP
+
+
+Article:
+Color Floyd-Steinberg is a PITA. Difference colors? LAB colors, euclidian thingy. That sucks,
+pink white and blue-ish white is the same difference as red and blue. Initial modification:
+multiply A and B differences (=hue difference) with sin(L). This makes those differences less
+important. Great results. But WtF is up with the shitty 'official' way? Seems there's multiple
+ways: latest and greatest is E2000. Actually not that much different than my hacky solution.
+
+Non-linear color space: one pixel of (0,0,0) and one of (64,64,64) don't look the same 
+(are not as bright) as two of (32,32,32). Luckily (linearized) RGB works.
+
+Stucki dithering?
+
+https://mathematica.stackexchange.com/questions/7483/how-to-calculate-mix-of-4-colors-defined-in-cielab-lab-model

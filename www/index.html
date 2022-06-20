@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="x-ua-compatible" content="ie=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+	<title>Cropper.js</title>
+	<link rel="stylesheet" href="cropperjs/dist//cropper.css">
+	<style>
+		.container {
+			margin: 20px auto;
+			max-width: 640px;
+			max-height: 640px;
+		}
+
+		image {
+			width: 100%;
+			height: 100%;
+		}
+		result {
+			width=600px;
+			height=448px;
+			display=none;
+		}
+	</style>
+</head>
+<body>
+	<div class="container">
+		<input type="file" id="file">
+		<input type="submit" value="Store image" id="okbutton" style="display: none">
+		<div>
+			<img id="image" class="image" src="" alt="Picture">
+		</div>
+		<div id="result" class="result" src="" alt="Result">
+	</div>
+	<script src="cropperjs/dist/cropper.js"></script>
+	<script>
+		window.addEventListener('DOMContentLoaded', function () {
+			var file = document.querySelector("#file");
+			var okbutton = document.querySelector("#okbutton");
+			var image = document.querySelector("#image");
+			var cropper;
+			file.addEventListener('change', function() {
+				if (this.files && this.files[0]) {
+					okbutton.style.display="block";
+					file.style.display="none";
+					image.onload = () => {
+						image.width="640";
+						image.height="640";
+						URL.revokeObjectURL(image.src);  // no longer needed, free memory
+						cropper = new Cropper(image, {
+							dragMode: 'move',
+							aspectRatio: 600/448,
+							autoCropArea: 0.8,
+							restore: false,
+							guides: false,
+							center: false,
+							highlight: false,
+							cropBoxMovable: false,
+							cropBoxResizable: false,
+							toggleDragModeOnDblclick: false,
+							rotatable: true,
+						});
+					}
+					image.src = URL.createObjectURL(this.files[0]); // set src to blob url
+				}
+			});
+			okbutton.addEventListener("click", function() {
+				var canvas = cropper.getCroppedCanvas({
+					width: 600,
+					height: 448,
+				});
+				canvas.toBlob(function (blob) {
+					var formData = new FormData();
+					formData.append('image', blob, 'image.jpg');
+					var xhr = new XMLHttpRequest();
+					xhr.upload.onprogress = function (e) {
+						var percent = '0';
+						var percentage = '0%';
+						if (e.lengthComputable) {
+							percent = Math.round((e.loaded / e.total) * 100);
+							okbutton.value=percent + '%';
+						}
+					}
+					xhr.onload = function () {
+						var res=document.querySelector("#result");
+						//eeuw
+						res.innerHTML='<img src="data:image/gif;base64,' + this.responseText + '">';
+						res.style.display="block";
+						image.style.display="none";
+						cropper.destroy();
+						okbutton.value="done";
+					}
+					xhr.onerror = function () {
+						okbutton.value="error";
+					}
+					xhr.open("POST", "upload.php");
+					xhr.send(formData);
+				});
+			});
+		});
+	</script>
+</body>
+</html>
