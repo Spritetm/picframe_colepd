@@ -1,3 +1,6 @@
-[submodule "components/esp32-wifi-manager"]
+[submodule "firmware/components/esp32-wifi-manager"]
 	path = firmware/components/esp32-wifi-manager
 	url = https://github.com/tonyp7/esp32-wifi-manager
+[submodule "www/cropperjs"]
+	path = "www/cropperjs"
+	url = https://github.com/fengyuanchen/cropperjs.git
