@@ -1,0 +1,11 @@
+<?php
+
+//Database configuration. Replace with your actual values
+
+//Database name
+$db="epd";
+//Username/password
+$username="epd";
+$pass="mypassword";
+
+?>

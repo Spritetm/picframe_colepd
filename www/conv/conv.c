@@ -17,13 +17,20 @@ gdImagePtr load_scaled(char *filename) {
 		perror(filename);
 		return NULL;
 	}
-	gdImagePtr oim=gdImageCreateFromJpegEx(f, 1);
-	if (oim==NULL) {
-		//try as png?
+	//We check the first 8 bytes of the file to check if it's PNG.
+	char pnghdr[8]={0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A};
+	char buf[8];
+	fread(buf, 8, 1, f);
+	rewind(f);
+	//If match, we load it as PNG, if not we load it as JPEG.
+	gdImagePtr oim;
+	if (memcmp(pnghdr, buf, 8)==0) {
 		oim=gdImageCreateFromPng(f);
-		if (oim==NULL) {
-			return NULL;
-		}
+	} else {
+		oim=gdImageCreateFromJpegEx(f, 1);
+	}
+	if (oim==NULL) {
+		return NULL;
 	}
 
 	gdImagePtr nim=NULL;

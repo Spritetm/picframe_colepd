@@ -1,26 +1,30 @@
 <?php
 
-$db="epd";
-$username="epd";
-$pass="boTlCO8QAyNB4toS";
+require("config.php");
 
 //(id, timestamp, orig_name, epd_bin)
 
 if (!isset($_FILES["image"])) {
 	header("Location: /index.html");
 }
-var_dump($_FILES["image"]);
 
+//system("/bin/cp \"".$_FILES["image"]["tmp_name"]."\" /tmp/img.png");
 $pngfile=tempnam("/tmp","epd");
-$convproc=popen("conv/conv -p \"".$pngfile."\" \"".$_FILES["image"]["tmp_name"]."\"");
-$bin=fread($handle, 1024*1024);
-pclose($convproc);
+$convproc=popen(__DIR__."/conv/conv -p \"".$pngfile."\" \"".$_FILES["image"]["tmp_name"]."\"", "r");
 
 $mysqli = mysqli_connect("localhost",$username, $pass, $db); 
 
 $stmt = $mysqli->prepare("INSERT INTO images (orig_name,epd_bin) VALUES (?,?)");
-$stmt->bind_param("sb", "", $bin);
-$stmt->execute();
+$orig_name="";
+$null=0;
+$stmt->bind_param("sb", $orig_name, $null);
+while(!feof($convproc)) {
+	$stmt->send_long_data(1, fread($convproc, 1024));
+}
+$stmt->send_long_data(1, $bin);
+$stmt->execute() || die($stmt->error);
+
+pclose($convproc);
 
 header("Content-Type: image/png");
 readfile($pngfile);
