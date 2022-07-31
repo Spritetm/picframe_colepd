@@ -26,14 +26,10 @@
 		<div>
 			<img id="image" class="image" src="" alt="Picture">
 		</div>
-		<canvas id="emscripten-canvas" height="448" width="600"></canvas>
 	</div>
 	<script src="cropperjs/dist/cropper.js"></script>
-	<script src="conv-js.js"></script>
 	<script>
-		Module.canvas = document.querySelector("#emscripten-canvas");
 		window.addEventListener('DOMContentLoaded', function () {
-
 			var file = document.querySelector("#file");
 			var okbutton = document.querySelector("#okbutton");
 			var image = document.querySelector("#image");
@@ -68,9 +64,6 @@
 					width: 600,
 					height: 448,
 				});
-				Module["preloadedImages"]["cropped.jpg"] = canvas;
-				Module.ccall('convert_to_bin');
-/*
 				canvas.toBlob(function (blob) {
 					var formData = new FormData();
 					formData.append('image', blob, 'image.jpg');
@@ -92,7 +85,6 @@
 					xhr.open("POST", "upload.php");
 					xhr.send(formData);
 				});
-*/
 			});
 		});
 	</script>
