@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="x-ua-compatible" content="ie=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+	<title>Cropper.js</title>
+	<link rel="stylesheet" href="cropperjs/dist//cropper.css">
+	<style>
+		.container {
+			margin: 20px auto;
+			max-width: 640px;
+			max-height: 640px;
+		}
+
+		image {
+			width: 100%;
+			height: 100%;
+		}
+	</style>
+</head>
+<body>
+	<div class="container">
+		<input type="file" id="file">
+		<input type="submit" value="Store image" id="okbutton" style="display: none">
+		<div>
+			<img id="image" class="image" src="" alt="Picture">
+		</div>
+		<canvas id="emscripten-canvas" height="448" width="600"></canvas>
+	</div>
+	<script src="cropperjs/dist/cropper.js"></script>
+	<script src="conv-js.js"></script>
+	<script>
+		Module.canvas = document.querySelector("#emscripten-canvas");
+		window.addEventListener('DOMContentLoaded', function () {
+
+			var file = document.querySelector("#file");
+			var okbutton = document.querySelector("#okbutton");
+			var image = document.querySelector("#image");
+			var cropper;
+			file.addEventListener('change', function() {
+				if (this.files && this.files[0]) {
+					okbutton.style.display="block";
+					file.style.display="none";
+					image.onload = () => {
+						image.width="640";
+						image.height="640";
+						URL.revokeObjectURL(image.src);  // no longer needed, free memory
+						cropper = new Cropper(image, {
+							dragMode: 'move',
+							aspectRatio: 600/448,
+							autoCropArea: 0.8,
+							restore: false,
+							guides: false,
+							center: false,
+							highlight: false,
+							cropBoxMovable: false,
+							cropBoxResizable: false,
+							toggleDragModeOnDblclick: false,
+							rotatable: true,
+						});
+					}
+					image.src = URL.createObjectURL(this.files[0]); // set src to blob url
+				}
+			});
+			okbutton.addEventListener("click", function() {
+				var canvas = cropper.getCroppedCanvas({
+					width: 600,
+					height: 448,
+				});
+				Module["preloadedImages"]["cropped.jpg"] = canvas;
+				Module.ccall('convert_to_bin');
+/*
+				canvas.toBlob(function (blob) {
+					var formData = new FormData();
+					formData.append('image', blob, 'image.jpg');
+					var xhr = new XMLHttpRequest();
+					xhr.upload.onprogress = function (e) {
+						var percent = '0';
+						var percentage = '0%';
+						if (e.lengthComputable) {
+							percent = Math.round((e.loaded / e.total) * 100);
+							okbutton.value=percent + '%';
+						}
+					}
+					xhr.load = function () {
+						okbutton.value="done";
+					}
+					xhr.error = function () {
+						okbutton.value="error";
+					}
+					xhr.open("POST", "upload.php");
+					xhr.send(formData);
+				});
+*/
+			});
+		});
+	</script>
+</body>
+</html>
