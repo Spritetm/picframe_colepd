@@ -26,12 +26,12 @@
 #define PIN_NUM_DC	 27
 #else
 #define EPD_HOST	SPI2_HOST
-#define PIN_NUM_BUSY 9
-#define PIN_NUM_MOSI 4
-#define PIN_NUM_CLK	 5
-#define PIN_NUM_CS	 6
-#define PIN_NUM_RST	 8
-#define PIN_NUM_DC	 7
+#define PIN_NUM_BUSY 4
+#define PIN_NUM_MOSI 9
+#define PIN_NUM_CLK	 8
+#define PIN_NUM_CS	 7
+#define PIN_NUM_RST	 5
+#define PIN_NUM_DC	 6
 #endif
 
 
