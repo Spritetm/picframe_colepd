@@ -10,10 +10,8 @@
 #define EPD_W 600
 #define EPD_H 448
 
-#define USE_LAB 0
-#define COL_DIST_CLIP_VAL 0
-#define COL_DIST_CLIP_VAL_AB 0
-
+//This loads a png/jpg file and if needed converts it to truecolor, crops the center to the
+//EPD aspect ratio and scales to EPD_W/EPD_H.
 gdImagePtr load_scaled(char *filename) {
 	FILE *f;
 	f=fopen(filename, "r");
@@ -42,7 +40,7 @@ gdImagePtr load_scaled(char *filename) {
 		//no scaling needed
 		nim=oim;
 	} else {
-		//Need scaling or converting to truecolor
+		//Need scaling and/or converting to truecolor
 		nim=gdImageCreateTrueColor(EPD_W, EPD_H);
 		if (nim==NULL) {
 			gdImageDestroy(oim);
@@ -63,6 +61,7 @@ gdImagePtr load_scaled(char *filename) {
 	return nim;
 }
 
+//The two typedefs define what the epd binary image looks like.
 typedef struct __attribute__((packed)) {
 	uint32_t id;
 	uint64_t timestamp;
@@ -75,11 +74,13 @@ typedef struct __attribute__((packed)) {
 	uint8_t padding[768-sizeof(flash_image_hdr_t)];
 } flash_image_t;
 
+//Convert SRGB to linear.
 //note: takes srgb [0..1], outputs linear rgb [0..1]
 float gamma_linear(float in) {
 	return (in > 0.04045) ? pow((in + 0.055) / (1.0 + 0.055), 2.4) : (in / 12.92);
 }
 
+//Converts a RGB float to a CIE-LAB float
 //note: takes linearized RGB [0..1], outputs LAB [0..1]
 void rgb_to_lab(float *rgb, float *lab) {
 	float var_R = rgb[0] * 100;
@@ -119,70 +120,92 @@ void rgb_to_lab(float *rgb, float *lab) {
 	lab[0] = ( 116 * var_Y ) - 16;
 	lab[1] = 500 * ( var_X - var_Y );
 	lab[2] = 200 * ( var_Y - var_Z );
-	for (int i=0; i<3; i++) lab[i]=lab[i]/100.0; //[0..100] -> [0..1]
 }
 
+//Returns the input value clamped between min and max
 float clamp(float val, float min, float max) {
 	if (val<min) val=min;
 	if (val>max) val=max;
 	return val;
 }
 
+//Given an array of [rgb] floats, adds the difference diff to the
+//pixel at [x,y], with i indicating the color (0=r, 1=g, 2=b)
 void dist_diff(float *pixels, int x, int y, int i, float dif) {
 	if (x<0 || x>=EPD_W) return;
 	if (y<0 || y>=EPD_H) return;
 	float new_val=pixels[(x+y*EPD_W)*3+i]+dif;
-#if USE_LAB
-	if (i==0) { //L
-		new_val=clamp(new_val, -COL_DIST_CLIP_VAL, 1+COL_DIST_CLIP_VAL);
-	} else { //A, B
-		new_val=clamp(new_val, -1-COL_DIST_CLIP_VAL, 1+COL_DIST_CLIP_VAL);
-	}
-#else
-	new_val=clamp(new_val, -COL_DIST_CLIP_VAL, 1+COL_DIST_CLIP_VAL);
-#endif
+	new_val=clamp(new_val, 0, 1);
 	pixels[(x+y*EPD_W)*3+i]=new_val;
 }
 
-float col_diff_lab(float *c1, float *c2) {
-	float dif=0;
-	const float dif_weight[3]={1, 1, 1};
-	for (int i=0; i<3; i++) {
-		float vdif=(c1[i]-c2[i]);
-		vdif*=dif_weight[i];
-		dif+=(vdif*vdif);
-	}
-	return dif;
+static inline float deg2rad(float deg) {
+	return (2 * M_PI * deg) / 360.0;
 }
 
+static inline float rad2deg(float rad) {
+	return 360.0 * rad / (2 * M_PI);
+}
 
-float col_diff_rgb(float *c1, float *c2) {
+//This, when fed two RGB values in range [0..1], returns the deltaE00 difference between the two.
+//The higher the return value, the more perceptually different the two RGB values are.
+float col_diff(float *rgb1, float *rgb2) {
 	float lab1[3], lab2[3];
-	rgb_to_lab(c1, lab1);
-	rgb_to_lab(c2, lab2);
+	rgb_to_lab(rgb1, lab1);
+	rgb_to_lab(rgb2, lab2);
 
-	//Color is less important when the luminosity is high or low (spherical
-	//color space), so we compensate for that.
-	float avg_l=(c1[0] + c2[0])/2;
-	avg_l=clamp(avg_l, 0, 1);
-	float col_comp=sin(avg_l*M_PI);
+	//deltaE00 code stolen from https://github.com/hamada147/IsThisColourSimilar/blob/master/Colour.js
+	// Start Equation
+	// Equation exist on the following URL http://www.brucelindbloom.com/index.html?Eqn_DeltaE_CIE2000.html
+	float avgL=(lab1[0]+lab2[0])/2;
+	float c1 = sqrtf(powf(lab1[1], 2) + powf(lab1[2], 2));
+	float c2 = sqrtf(powf(lab2[1], 2) + powf(lab2[2], 2));
+	float avgC = (c1 + c2) / 2;
+	float g = (1 - sqrtf(powf(avgC, 7) / (powf(avgC, 7) + powf(25, 7)))) / 2;
 
+	float a1p = lab1[1] * (1 + g);
+	float a2p = lab2[1] * (1 + g);
 
-	float dif=0;
-	for (int i=0; i<3; i++) {
-		float vd=(lab1[i]-lab2[i]);
-		if (i!=0) vd*=col_comp;
-		dif+=vd*vd;
+	float c1p = sqrtf(powf(a1p, 2) + powf(lab1[2], 2));
+	float c2p = sqrtf(powf(a2p, 2) + powf(lab2[2], 2));
+
+	float avgCp = (c1p + c2p) / 2;
+
+	float h1p = rad2deg(atan2f(lab1[2], a1p));
+	if (h1p < 0) h1p = h1p + 360;
+	float h2p = rad2deg(atan2f(lab2[2], a2p));
+	if (h2p < 0) h2p = h2p + 360;
+
+	float avghp = fabsf(h1p - h2p) > 180 ? (h1p + h2p + 360) / 2 : (h1p + h2p) / 2;
+	float t = 1 - 0.17 * cosf(deg2rad(avghp - 30)) + 0.24 * cosf(deg2rad(2 * avghp)) + 0.32 * cosf(deg2rad(3 * avghp + 6)) - 0.2 * cosf(deg2rad(4 * avghp - 63));
+	float deltahp = h2p - h1p;
+	if (fabsf(deltahp) > 180) {
+		if (h2p <= h1p) {
+			deltahp += 360;
+		} else {
+			deltahp -= 360;
+		}
 	}
 
+	float deltalp = lab2[0] - lab1[0];
+	float deltacp = c2p - c1p;
 
+	deltahp = 2 * sqrtf(c1p * c2p) * sinf(deg2rad(deltahp) / 2);
 
-//	int lum1=0.2126*c1[0] + 0.7152*c1[1] + 0.0722*c1[2];
-//	int lum2=0.2126*c2[0] + 0.7152*c2[1] + 0.0722*c2[2];
-//	int lumdif=lum1-lum2;
-//	dif+=(lumdif*lumdif);
+	float sl = 1 + ((0.015 * powf(avgL - 50, 2)) / sqrtf(20 + powf(avgL - 50, 2)));
+	float sc = 1 + 0.045 * avgCp;
+	float sh = 1 + 0.015 * avgCp * t;
 
-	return dif;
+	float deltaro = 30 * expf(-(powf((avghp - 275) / 25, 2)));
+	float rc = 2 * sqrtf(powf(avgCp, 7) / (powf(avgCp, 7) + powf(25, 7)));
+	float rt = -rc * sinf(2 * deg2rad(deltaro));
+
+	float kl = 1;
+	float kc = 1;
+	float kh = 1;
+
+	float deltaE = sqrtf(powf(deltalp / (kl * sl), 2) + powf(deltacp / (kc * sc), 2) + powf(deltahp / (kh * sh), 2) + rt * (deltacp / (kc * sc)) * (deltahp / (kh * sh)));
+	return deltaE;
 }
 
 int main(int argc, char **argv) {
@@ -190,6 +213,7 @@ int main(int argc, char **argv) {
 	char *im_out="";
 	char *bin_out="";
 	int error=0;
+	//Find & parse command line arguments
 	for (int i=1; i<argc; i++) {
 		if (strcmp(argv[i], "-p")==0 && i<argc-1) {
 			if (im_out[0]!=0) error=1;
@@ -206,7 +230,7 @@ int main(int argc, char **argv) {
 	}
 	if (im_in[0]==0 || error) {
 		printf("Usage: %s [-o outfile.bin] [-p preview.png] infile.[jpg|png]\n", argv[0]);
-		printf("infile can be png or jpeg, if no outfile is given, output will go to stdout\n");
+		printf("infile can be png or jpeg; if no outfile is given, output will go to stdout\n");
 		exit(error);
 	}
 
@@ -219,22 +243,24 @@ int main(int argc, char **argv) {
 
 	flash_image_t *bin=calloc(sizeof(flash_image_t), 1);
 	assert(bin);
-	bin->hdr.id=0xfafa1a1a;
+	bin->hdr.id=0xfafa1a1a; //magic header
 	bin->hdr.timestamp=time(NULL);
 	
 	//RGB colors as displayed on the screen
+	//These are calculated by grabbing a test pattern which shows all colors, taking a picture,
+	//then using an image editor to max out the levels for max contrast & saturation, then taking
+	//the linear (not SRGB) RGB values and putting them here.
 	float epd_colors[7][3]={ //rgb
 		{0,0,0},
 		{1,1,1},
-		{0.07, 0.41, 0.09},
-//		{0.07, 0.08, 0.34},
+		{0.07, 0.08, 0.34},
 		{0.30, 0.25, 0.75},
 		{0.63, 0.06, 0.07},
 		{0.98, 0.92, 0.24},
 		{0.89, 0.51, 0.14}
 	};
 
-	//Convert float RGB colors to int colors
+	//Convert float RGB colors to int colors for putting on the preview png
 	int epd_colors_int[7];
 	for (int i=0; i<7; i++) {
 		int c=0;
@@ -244,90 +270,59 @@ int main(int argc, char **argv) {
 		}
 		epd_colors_int[i]=c;
 	}
-#if USE_LAB
-	//Convert to LAB as well
-	float epd_colors_lab[7][3];
-	for (int i=0; i<7; i++) {
-		rgb_to_lab(epd_colors[i], epd_colors_lab[i]);
-	}
-#endif
 
+	//Convert image to an array of floats so we can Ffloyd-Steinberg without limiting ourselves
+	//to the range of ints
 	float *pixels=calloc(EPD_W*EPD_H*3, sizeof(float));
 	assert(pixels);
 	float *pixelp=pixels;
 	for (int y=0; y<EPD_H; y++) {
 		for (int x=0; x<EPD_W; x++) {
 			int c=gdImageGetPixel(im,x,y);
-#if USE_LAB
-			float rgbval[3], lab[3];
-			rgbval[0]=gamma_linear(((c>>16)&0xff)/255.0);
-			rgbval[1]=gamma_linear(((c>>8)&0xff)/255.0);
-			rgbval[2]=gamma_linear(((c>>0)&0xff)/255.0);
-			rgb_to_lab(rgbval, lab);
-			for (int i=0; i<3; i++) *pixelp++=lab[i];
-#else
 			*pixelp++=gamma_linear(((c>>16)&0xff)/255.0);
 			*pixelp++=gamma_linear(((c>>8)&0xff)/255.0);
 			*pixelp++=gamma_linear(((c>>0)&0xff)/255.0);
-#endif
 		}
 	}
 
+	//Create preview image
 	gdImagePtr tim=gdImageCreateTrueColor(EPD_W, EPD_H);
 	assert(tim);
 	for (int y=0; y<EPD_H; y++) {
 		int ob=0;
 		for (int x=0; x<EPD_W; x++) {
-			//Find closest color
+			//Find closest color for this pixel from the palette the epd can display
 			int best=0;
 			float best_dif=999999999;
 			for (int i=0; i<7; i++) {
-#if USE_LAB
-				float d=col_diff_lab(&pixels[(x+y*EPD_W)*3], epd_colors_lab[i]);
-#else
-				float d=col_diff_rgb(&pixels[(x+y*EPD_W)*3], epd_colors[i]);
-#endif
+				float d=col_diff(&pixels[(x+y*EPD_W)*3], epd_colors[i]);
 				if (d<best_dif) {
 					best_dif=d;
 					best=i;
 				}
 			}
 			
-			//Distribute difference
-			float dif[3];
+			//Distribute difference between chosen and ideal color using Floyd-Steinberg
 			for (int i=0; i<3; i++) {
-#if USE_LAB
-				dif[i]=pixels[(x+y*EPD_W)*3+i] - epd_colors_lab[best][i];
-#else
-				dif[i]=pixels[(x+y*EPD_W)*3+i] - epd_colors[best][i];
-#endif
+				float dif=pixels[(x+y*EPD_W)*3+i] - epd_colors[best][i];
+				dist_diff(pixels, x+1, y, i, (dif/16.0)*7.0);
+				dist_diff(pixels, x-1, y+1, i, (dif/16.0)*3.0);
+				dist_diff(pixels, x, y+1, i, (dif/16.0)*5.0);
+				dist_diff(pixels, x+1, y+1, i, (dif/16.0)*1.0);
 			}
-#if USE_LAB
-			//Color is less important when the luminosity is high or low (spherical
-			//color space), so we compensate for that.
-			float avg_l=(pixels[(x+y*EPD_W)*3] + epd_colors[best][0])/2;
-			avg_l=clamp(avg_l, 0, 1);
-			float col_comp=sin(avg_l*M_PI);
-			dif[1]=dif[1]*col_comp;
-			dif[2]=dif[2]*col_comp;
-#endif
-			for (int i=0; i<3; i++) {
-				dist_diff(pixels, x+1, y, i, (dif[i]/16.0)*7.0);
-				dist_diff(pixels, x-1, y+1, i, (dif[i]/16.0)*3.0);
-				dist_diff(pixels, x, y+1, i, (dif[i]/16.0)*5.0);
-				dist_diff(pixels, x+1, y+1, i, (dif[i]/16.0)*1.0);
-			}
-			//Set col byte
+			//Set byte in output EPD binary data
 			if (x&1) {
 				bin->data[(y*EPD_W+x)/2]=(ob<<4)|best;
 			} else {
 				ob=best;
 			}
+			//Also set pixel in output
 			gdImageSetPixel(tim, x, y, epd_colors_int[best]);
 		}
 	}
 
 	if (im_out[0]) {
+		//Write preview image
 		FILE *of=fopen(im_out, "w");
 		if (!of) {
 			perror(im_out);
@@ -338,6 +333,7 @@ int main(int argc, char **argv) {
 	}
 	gdImageDestroy(tim);
 	if (bin_out[0]) {
+		//Write binary output to file
 		FILE *of=fopen(bin_out, "wb");
 		if (!of) {
 			perror(bin_out);
@@ -346,6 +342,7 @@ int main(int argc, char **argv) {
 		fwrite(bin, sizeof(flash_image_t)-sizeof(bin->padding), 1, of);
 		fclose(of);
 	} else {
+		//Write binary output to stdout
 		fwrite(bin, sizeof(flash_image_t)-sizeof(bin->padding), 1, stdout);
 	}
 }
