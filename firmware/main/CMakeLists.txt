@@ -1,5 +1,5 @@
 set(srcs "main.c"
-    "decode_image.c"
+    "epd.c"
     )
 
 idf_component_register(SRCS ${srcs}
