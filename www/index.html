@@ -17,6 +17,11 @@
 			width: 100%;
 			height: 100%;
 		}
+		result {
+			width=600px;
+			height=448px;
+			display=none;
+		}
 	</style>
 </head>
 <body>
@@ -26,6 +31,7 @@
 		<div>
 			<img id="image" class="image" src="" alt="Picture">
 		</div>
+		<div id="result" class="result" src="" alt="Result">
 	</div>
 	<script src="cropperjs/dist/cropper.js"></script>
 	<script>
@@ -76,10 +82,16 @@
 							okbutton.value=percent + '%';
 						}
 					}
-					xhr.load = function () {
+					xhr.onload = function () {
+						var res=document.querySelector("#result");
+						//eeuw
+						res.innerHTML='<img src="data:image/gif;base64,' + this.responseText + '">';
+						res.style.display="block";
+						image.style.display="none";
+						cropper.destroy();
 						okbutton.value="done";
 					}
-					xhr.error = function () {
+					xhr.onerror = function () {
 						okbutton.value="error";
 					}
 					xhr.open("POST", "upload.php");

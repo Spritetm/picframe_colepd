@@ -10,6 +10,10 @@
 #define EPD_W 600
 #define EPD_H 448
 
+#define USE_LAB 0
+#define COL_DIST_CLIP_VAL 0
+#define COL_DIST_CLIP_VAL_AB 0
+
 gdImagePtr load_scaled(char *filename) {
 	FILE *f;
 	f=fopen(filename, "r");
@@ -71,11 +75,12 @@ typedef struct __attribute__((packed)) {
 	uint8_t padding[768-sizeof(flash_image_hdr_t)];
 } flash_image_t;
 
+//note: takes srgb [0..1], outputs linear rgb [0..1]
 float gamma_linear(float in) {
 	return (in > 0.04045) ? pow((in + 0.055) / (1.0 + 0.055), 2.4) : (in / 12.92);
 }
 
-//note: takes linearized RGB
+//note: takes linearized RGB [0..1], outputs LAB [0..1]
 void rgb_to_lab(float *rgb, float *lab) {
 	float var_R = rgb[0] * 100;
 	float var_G = rgb[1] * 100;
@@ -114,31 +119,67 @@ void rgb_to_lab(float *rgb, float *lab) {
 	lab[0] = ( 116 * var_Y ) - 16;
 	lab[1] = 500 * ( var_X - var_Y );
 	lab[2] = 200 * ( var_Y - var_Z );
+	for (int i=0; i<3; i++) lab[i]=lab[i]/100.0; //[0..100] -> [0..1]
 }
 
-void dist_diff(float *rgb, int x, int y, int i, float dif) {
-	float edge=2;
+float clamp(float val, float min, float max) {
+	if (val<min) val=min;
+	if (val>max) val=max;
+	return val;
+}
+
+void dist_diff(float *pixels, int x, int y, int i, float dif) {
 	if (x<0 || x>=EPD_W) return;
 	if (y<0 || y>=EPD_H) return;
-	float new_val=rgb[(x+y*EPD_W)*3+i]+dif;
-	if (new_val<-edge) new_val=-edge;
-	if (new_val>1+edge) new_val=1+edge;
-	rgb[(x+y*EPD_W)*3+i]=new_val;
+	float new_val=pixels[(x+y*EPD_W)*3+i]+dif;
+#if USE_LAB
+	if (i==0) { //L
+		new_val=clamp(new_val, -COL_DIST_CLIP_VAL, 1+COL_DIST_CLIP_VAL);
+	} else { //A, B
+		new_val=clamp(new_val, -1-COL_DIST_CLIP_VAL, 1+COL_DIST_CLIP_VAL);
+	}
+#else
+	new_val=clamp(new_val, -COL_DIST_CLIP_VAL, 1+COL_DIST_CLIP_VAL);
+#endif
+	pixels[(x+y*EPD_W)*3+i]=new_val;
 }
 
-float col_diff(float *c1, float *c2) {
+float col_diff_lab(float *c1, float *c2) {
+	float dif=0;
+	const float dif_weight[3]={1, 1, 1};
+	for (int i=0; i<3; i++) {
+		float vdif=(c1[i]-c2[i]);
+		vdif*=dif_weight[i];
+		dif+=(vdif*vdif);
+	}
+	return dif;
+}
+
+
+float col_diff_rgb(float *c1, float *c2) {
 	float lab1[3], lab2[3];
 	rgb_to_lab(c1, lab1);
 	rgb_to_lab(c2, lab2);
+
+	//Color is less important when the luminosity is high or low (spherical
+	//color space), so we compensate for that.
+	float avg_l=(c1[0] + c2[0])/2;
+	avg_l=clamp(avg_l, 0, 1);
+	float col_comp=sin(avg_l*M_PI);
+
+
 	float dif=0;
 	for (int i=0; i<3; i++) {
-//		dif+=(c1[i]-c2[i])*(c1[i]-c2[i]);
-		dif+=(lab1[i]-lab2[i])*(lab1[i]-lab2[i]);
+		float vd=(lab1[i]-lab2[i]);
+		if (i!=0) vd*=col_comp;
+		dif+=vd*vd;
 	}
 
-	int lum1=0.2126*c1[0] + 0.7152*c1[1] + 0.0722*c1[2];
-	int lum2=0.2126*c2[0] + 0.7152*c2[1] + 0.0722*c2[2];
-	int lumdif=lum1-lum2;
+
+
+//	int lum1=0.2126*c1[0] + 0.7152*c1[1] + 0.0722*c1[2];
+//	int lum2=0.2126*c2[0] + 0.7152*c2[1] + 0.0722*c2[2];
+//	int lumdif=lum1-lum2;
 //	dif+=(lumdif*lumdif);
 
 	return dif;
@@ -203,16 +244,32 @@ int main(int argc, char **argv) {
 		}
 		epd_colors_int[i]=c;
 	}
+#if USE_LAB
+	//Convert to LAB as well
+	float epd_colors_lab[7][3];
+	for (int i=0; i<7; i++) {
+		rgb_to_lab(epd_colors[i], epd_colors_lab[i]);
+	}
+#endif
 
-	float *rgb=calloc(EPD_W*EPD_H*3, sizeof(float));
-	assert(rgb);
-	float *rgbp=rgb;
+	float *pixels=calloc(EPD_W*EPD_H*3, sizeof(float));
+	assert(pixels);
+	float *pixelp=pixels;
 	for (int y=0; y<EPD_H; y++) {
 		for (int x=0; x<EPD_W; x++) {
 			int c=gdImageGetPixel(im,x,y);
-			*rgbp++=gamma_linear(((c>>16)&0xff)/255.0);
-			*rgbp++=gamma_linear(((c>>8)&0xff)/255.0);
-			*rgbp++=gamma_linear(((c>>0)&0xff)/255.0);
+#if USE_LAB
+			float rgbval[3], lab[3];
+			rgbval[0]=gamma_linear(((c>>16)&0xff)/255.0);
+			rgbval[1]=gamma_linear(((c>>8)&0xff)/255.0);
+			rgbval[2]=gamma_linear(((c>>0)&0xff)/255.0);
+			rgb_to_lab(rgbval, lab);
+			for (int i=0; i<3; i++) *pixelp++=lab[i];
+#else
+			*pixelp++=gamma_linear(((c>>16)&0xff)/255.0);
+			*pixelp++=gamma_linear(((c>>8)&0xff)/255.0);
+			*pixelp++=gamma_linear(((c>>0)&0xff)/255.0);
+#endif
 		}
 	}
 
@@ -225,7 +282,11 @@ int main(int argc, char **argv) {
 			int best=0;
 			float best_dif=999999999;
 			for (int i=0; i<7; i++) {
-				float d=col_diff(&rgb[(x+y*EPD_W)*3], epd_colors[i]);
+#if USE_LAB
+				float d=col_diff_lab(&pixels[(x+y*EPD_W)*3], epd_colors_lab[i]);
+#else
+				float d=col_diff_rgb(&pixels[(x+y*EPD_W)*3], epd_colors[i]);
+#endif
 				if (d<best_dif) {
 					best_dif=d;
 					best=i;
@@ -233,12 +294,28 @@ int main(int argc, char **argv) {
 			}
 			
 			//Distribute difference
+			float dif[3];
 			for (int i=0; i<3; i++) {
-				float dif=rgb[(x+y*EPD_W)*3+i] - epd_colors[best][i];
-				dist_diff(rgb, x+1, y, i, (dif/16)*7);
-				dist_diff(rgb, x-1, y+1, i, (dif/16)*3);
-				dist_diff(rgb, x, y+1, i, (dif/16)*5);
-				dist_diff(rgb, x+1, y+1, i, (dif/16)*1);
+#if USE_LAB
+				dif[i]=pixels[(x+y*EPD_W)*3+i] - epd_colors_lab[best][i];
+#else
+				dif[i]=pixels[(x+y*EPD_W)*3+i] - epd_colors[best][i];
+#endif
+			}
+#if USE_LAB
+			//Color is less important when the luminosity is high or low (spherical
+			//color space), so we compensate for that.
+			float avg_l=(pixels[(x+y*EPD_W)*3] + epd_colors[best][0])/2;
+			avg_l=clamp(avg_l, 0, 1);
+			float col_comp=sin(avg_l*M_PI);
+			dif[1]=dif[1]*col_comp;
+			dif[2]=dif[2]*col_comp;
+#endif
+			for (int i=0; i<3; i++) {
+				dist_diff(pixels, x+1, y, i, (dif[i]/16.0)*7.0);
+				dist_diff(pixels, x-1, y+1, i, (dif[i]/16.0)*3.0);
+				dist_diff(pixels, x, y+1, i, (dif[i]/16.0)*5.0);
+				dist_diff(pixels, x+1, y+1, i, (dif[i]/16.0)*1.0);
 			}
 			//Set col byte
 			if (x&1) {

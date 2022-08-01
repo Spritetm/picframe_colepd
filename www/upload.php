@@ -26,8 +26,10 @@ $stmt->execute() || die($stmt->error);
 
 pclose($convproc);
 
-header("Content-Type: image/png");
-readfile($pngfile);
+//header("Content-Type: image/png");
+//readfile($pngfile);
+echo base64_encode(file_get_contents($pngfile));
+
 unlink($pngfile);
 
 ?>
