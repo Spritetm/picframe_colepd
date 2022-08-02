@@ -10,3 +10,8 @@ pink white and blue-ish white is the same difference as red and blue. Initial mo
 multiply A and B differences (=hue difference) with sin(L). This makes those differences less
 important. Great results. But WtF is up with the shitty 'official' way? Seems there's multiple
 ways: latest and greatest is E2000. Actually not that much different than my hacky solution.
+
+Non-linear color space: one pixel of (0,0,0) and one of (64,64,64) don't look the same 
+(are not as bright) as two of (32,32,32)
+
+Stucki dithering?

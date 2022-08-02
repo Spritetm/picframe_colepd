@@ -61,16 +61,13 @@ static const epd_init_cmd_t epd_init_cmds[]={
 /* Send a command to the EPD. Uses spi_device_polling_transmit, which waits
  * until the transfer is complete.
  */
-static void epd_cmd(spi_device_handle_t spi, const uint8_t cmd, bool keep_cs_active) {
+static void epd_cmd(spi_device_handle_t spi, const uint8_t cmd) {
 	esp_err_t ret;
 	spi_transaction_t t;
 	memset(&t, 0, sizeof(t));		//Zero out the transaction
 	t.length=8;						//Command is 8 bits
 	t.tx_buffer=&cmd;				//The data is the cmd itself
 	t.user=(void*)0;				//D/C needs to be set to 0
-	if (keep_cs_active) {
-	  t.flags = SPI_TRANS_CS_KEEP_ACTIVE;	//Keep CS active after data transfer
-	}
 	ret=spi_device_polling_transmit(spi, &t);  //Transmit!
 	assert(ret==ESP_OK);			//Should have had no issues.
 }
@@ -104,6 +101,7 @@ static void wait_busy(int val, int timeout_ms) {
 		vTaskDelay(2);
 		if (esp_timer_get_time()>tout) {
 			ESP_LOGE(TAG, "Timeout on waiting for busy to go %s!", val?"high":"low");
+			return;
 		}
 	}
 }
@@ -141,7 +139,7 @@ static void epd_init(spi_device_handle_t spi) {
 
 	//Send all the commands
 	while (epd_init_cmds[cmd].databytes!=0xff) {
-		epd_cmd(spi, epd_init_cmds[cmd].cmd, false);
+		epd_cmd(spi, epd_init_cmds[cmd].cmd);
 		uint8_t data[16];
 		memcpy(data, epd_init_cmds[cmd].data, 16);
 		epd_data(spi, data, epd_init_cmds[cmd].databytes&0x1F);
@@ -152,10 +150,12 @@ static void epd_init(spi_device_handle_t spi) {
 	}
 }
 
+
+spi_device_handle_t spi;
+
 void epd_send(const uint8_t *epddata, int icon) {
 	/* initialize epd */
 	esp_err_t ret;
-	spi_device_handle_t spi;
 	spi_bus_config_t buscfg={
 		.miso_io_num=-1,
 		.mosi_io_num=PIN_NUM_MOSI,
@@ -180,23 +180,39 @@ void epd_send(const uint8_t *epddata, int icon) {
 	//Initialize the EPD
 	epd_init(spi);
 	
-	epd_cmd(spi, 0x61, false);
+#if 0
+	epd_cmd(spi, 0x61);
 	uint8_t data[4]={0x02, 0x58, 0x01, 0xC0};
 	epd_data(spi, data, 4);
-	epd_cmd(spi, 0x10, false);
+	epd_cmd(spi, 0x10);
 	for (int y=0; y<448; y++) {
 		uint8_t buf[300];
 		memcpy(buf, &epddata[y*300], 300);
 		epd_data(spi, buf, 300);
 	}
-	epd_cmd(spi, 0x4, false);
+	epd_cmd(spi, 0x4);
 	wait_busy(1, 30000);
-	epd_cmd(spi, 0x12, false);
+	epd_cmd(spi, 0x12);
 	wait_busy(1, 30000);
-	epd_cmd(spi, 0x2, false);
-	wait_busy(0, 30000);
-	ESP_LOGI(TAG, "Displayed image. Shutting down EPD.");
-	epd_cmd(spi, 0x7, false);
+#endif
+	epd_cmd(spi, 0x2);
+	wait_busy(1, 30000);
+	ESP_LOGI(TAG, "Displayed image.");
+}
+
+void epd_shutdown() {
+	//deep sleep
+	epd_cmd(spi, 0x7);
 	uint8_t sdata=0xA5;
 	epd_data(spi, &sdata, 1);
+	const gpio_config_t cfg={
+		.pin_bit_mask=(1<<PIN_NUM_DC)|(1<<PIN_NUM_RST)|(1<<PIN_NUM_MOSI)|(1<<PIN_NUM_CS)|(1<<PIN_NUM_CLK),
+		.mode=GPIO_MODE_OUTPUT
+	};
+	//not sure if CS survives deep sleep, as it's GPIO15... RST surely does.
+	gpio_set_level(PIN_NUM_CS, 0);
+	gpio_set_level(PIN_NUM_RST, 1);
+	gpio_config(&cfg);
+	gpio_hold_en(PIN_NUM_CS);
+	gpio_hold_en(PIN_NUM_RST);
 }

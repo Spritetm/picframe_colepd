@@ -15,6 +15,7 @@
 #include "esp_http_client.h"
 #include "nvs.h"
 #include "epd.h"
+#include "esp_sleep.h"
 
 const char *TAG="main";
 
@@ -105,8 +106,9 @@ void cb_connection_ok(void *pvParameter){
 void app_main(void) {
 	_Static_assert((sizeof(flash_image_t) == IMG_SIZE_BYTES), "flash_image_t not right size");
 	connect_sema=xSemaphoreCreateBinary();
+
 	/* start the wifi manager */
-	wifi_manager_start();
+//	wifi_manager_start();
 	wifi_manager_set_callback(WM_EVENT_STA_GOT_IP, &cb_connection_ok);
 
 	const flash_image_t *images=NULL;
@@ -119,16 +121,17 @@ void app_main(void) {
 
 	ESP_LOGI(TAG, "Waiting for connection...");
 	//wait for connection
-	int can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(30*1000));
+//	int can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(30*1000));
+	int can_connect=0;
 
 	int32_t to_display=-1;
 	if (can_connect) {
 		to_display=fetch_new_image(images, part);
 		if (to_display>=0) nvs_set_i32(nvs, "l", to_display);
 	}
-	wifi_manager_destroy();
-	vTaskDelay(pdMS_TO_TICKS(200)); //needed?
-	esp_wifi_stop();
+//	wifi_manager_destroy();
+//	vTaskDelay(pdMS_TO_TICKS(200)); //needed?
+//	esp_wifi_stop();
 
 	if (to_display==-1) {
 		nvs_get_i32(nvs, "l", &to_display);
@@ -140,4 +143,10 @@ void app_main(void) {
 	ESP_LOGI(TAG, "Displaying img from slot %d", to_display);
 
 	epd_send(images[to_display].data, 0);
+
+
+	epd_shutdown();
+	ESP_LOGI(TAG, "Deep sleep.");
+	esp_sleep_enable_timer_wakeup(60*1000*1000);
+	esp_deep_sleep_start();
 }
