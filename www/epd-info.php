@@ -29,6 +29,9 @@ if (!preg_match("/^[0-9a-fA-F]{12}$/", $mac)) {
 	$mac="000000000000";
 }
 
+$fw="unknown";
+if (isset($_GET["fw"])) $fw=$_GET["fw"];
+
 //Find device based on MAC
 $result = $mysqli->query("SELECT id,tz,fw_upd,update_hour FROM devices WHERE `mac`='$mac'");
 $dev_info=$result->fetch_assoc();
@@ -46,12 +49,14 @@ if (!$dev_info) {
 }
 
 //Insert checkin data into db
-$stmt = $mysqli->prepare("INSERT INTO checkins (device_id,battery_mv,ip) VALUES (?,?,?)");
+$stmt = $mysqli->prepare("INSERT INTO checkins (device_id,battery_mv,ip,fw) VALUES (?,?,?,?)");
 $battery_mv=0;
 $ip="";
+$fw="unknown";
+if (isset($_GET["fw"])) $fw=$_GET["fw"];
 if (isset($_GET["bat"])) $battery_mv=$_GET["bat"];
 if (isset($_SERVER['REMOTE_ADDR'])) $ip=$_SERVER['REMOTE_ADDR'];
-$stmt->bind_param("iis", $dev_info["id"], $battery_mv, $ip);
+$stmt->bind_param("iiss", $dev_info["id"], $battery_mv, $ip, $fw);
 $stmt->execute() || die($stmt->error);
 
 //Grab latest 10 images

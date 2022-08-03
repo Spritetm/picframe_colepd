@@ -10,6 +10,8 @@
 #define EPD_W 600
 #define EPD_H 448
 
+#define EPD_UPSIDE_DOWN 1
+
 //This loads a png/jpg file and if needed converts it to truecolor, crops the center to the
 //EPD aspect ratio and scales to EPD_W/EPD_H.
 gdImagePtr load_scaled(char *filename) {
@@ -253,7 +255,7 @@ int main(int argc, char **argv) {
 	float epd_colors[7][3]={ //rgb
 		{0,0,0},
 		{1,1,1},
-		{0.07, 0.08, 0.34},
+		{0.07, 0.41, 0.09},
 		{0.30, 0.25, 0.75},
 		{0.63, 0.06, 0.07},
 		{0.98, 0.92, 0.24},
@@ -311,11 +313,19 @@ int main(int argc, char **argv) {
 				dist_diff(pixels, x+1, y+1, i, (dif/16.0)*1.0);
 			}
 			//Set byte in output EPD binary data
+#if EPD_UPSIDE_DOWN
+			if (x&1) {
+				bin->data[((EPD_H-1-y)*EPD_W+(EPD_W-1-x))/2]=ob|(best<<4);
+			} else {
+				ob=best;
+			}
+#else
 			if (x&1) {
 				bin->data[(y*EPD_W+x)/2]=(ob<<4)|best;
 			} else {
 				ob=best;
 			}
+#endif
 			//Also set pixel in output
 			gdImageSetPixel(tim, x, y, epd_colors_int[best]);
 		}
