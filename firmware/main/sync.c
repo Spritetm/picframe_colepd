@@ -13,11 +13,13 @@
 #include "nvs.h"
 #include "esp_mac.h"
 #include "cJSON.h"
+#include "esp_check.h"
 #include "esp_flash_partitions.h"
 #include "esp_ota_ops.h"
 #include "esp_tls_crypto.h"
 #include "mbedtls/base64.h"
 #include "sync.h"
+#include "io.h"
 
 static const char *TAG="sync";
 
@@ -29,6 +31,13 @@ static const char *TAG="sync";
 #define CHECKFW_NEED_UPDATE 1
 #define CHECKFW_ERR 2
 
+static void get_app_sha(uint8_t *sha) {
+	const esp_partition_t *runpart=esp_ota_get_running_partition();
+	esp_app_desc_t runappinfo;
+	esp_ota_get_partition_description(runpart, &runappinfo);
+	memcpy(sha, runappinfo.app_elf_sha256, 32);
+}
+
 static int check_fw_update(cJSON *json) {
 	char sha[32];
 	cJSON *js_fwsha=cJSON_GetObjectItem(json, "fw_sha");
@@ -39,11 +48,10 @@ static int check_fw_update(cJSON *json) {
 	mbedtls_base64_decode((unsigned char*)sha, 32, &olen, (const unsigned char*)sha_txt, strlen(sha_txt));
 	if (olen!=32) return CHECKFW_ERR;
 
-	const esp_partition_t *runpart=esp_ota_get_running_partition();
-	esp_app_desc_t runappinfo;
-	esp_ota_get_partition_description(runpart, &runappinfo);
+	uint8_t cur_sha[32];
+	get_app_sha(cur_sha);
 
-	if (memcmp(runappinfo.app_elf_sha256, sha, 32)==0) {
+	if (memcmp(cur_sha, sha, 32)==0) {
 		ESP_LOGI(TAG, "Firmware still up to date.");
 		return CHECKFW_OK;
 	} else {
@@ -91,8 +99,9 @@ static void do_fw_update(esp_http_client_handle_t http) {
 	}
 	ESP_LOGW(TAG, "Update succesful! Booting into new app version.");
 	esp_restart();
-
+	while(1); //never reached
 err_ota:
+	esp_ota_abort(ota);
 err:
 }
 
@@ -104,41 +113,57 @@ const char *json_get_string(cJSON *json, const char *name) {
 }
 
 esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part) {
+	esp_err_t ret=ESP_OK;
 	const esp_http_client_config_t config={
 		.url=BASE_URL,
 	};
 	esp_http_client_handle_t http=esp_http_client_init(&config);
+	ESP_GOTO_ON_FALSE(http, ESP_ERR_NO_MEM, err_client_alloc, TAG, "couldn't init http client");
 
 	//Generate info retrieve URL
 	unsigned char mac[6];
-	char url[128];
+	char url[192];
 	esp_base_mac_addr_get(mac);
-	int bat_pwr=123; //todo
-	sprintf(url, "%s%s?mac=%02X%02X%02X%02X%02X%02X&bat=%d", BASE_URL, INFO_PATH, 
-				mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], bat_pwr);
+	int bat_pwr=io_get_battery_mv();
+	uint8_t cur_sha[32];
+	get_app_sha(cur_sha);
+	char cur_sha_text[16];
+	for (int i=0; i<8; i++) sprintf(&cur_sha_text[i*2], "%02X", cur_sha[i]);
+	sprintf(url, "%s%s?mac=%02X%02X%02X%02X%02X%02X&bat=%d&fw=%s", BASE_URL, INFO_PATH, 
+				mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], bat_pwr, cur_sha_text);
 
 	//Fetch info
-	esp_http_client_set_url(http, url);
-	esp_http_client_open(http, 0);
-	esp_http_client_fetch_headers(http);
+	esp_err_t err;
+	err=esp_http_client_set_url(http, url);
+	ESP_GOTO_ON_ERROR(err, err_http, TAG, "esp_http_client_url to info url failed");
+	err=esp_http_client_open(http, 0);
+	ESP_GOTO_ON_ERROR(err, err_http, TAG, "esp_http_client_open for info url failed");
+	esp_http_client_fetch_headers(http); //note: error ignored
 	char resp[512];
-	esp_http_client_read(http, resp, sizeof(resp));
-	esp_http_client_close(http);
+	size_t len=esp_http_client_read(http, resp, sizeof(resp));
+	ESP_GOTO_ON_FALSE(len>0, ESP_FAIL, err_http, TAG, "couldn't read info url");
+	err=esp_http_client_close(http);
+	ESP_GOTO_ON_ERROR(err, err_http, TAG, "esp_http_client_open for info url failed");
 
 	//Parse info
 	cJSON *json=cJSON_Parse(resp);
+	ESP_GOTO_ON_FALSE(json!=NULL, ESP_FAIL, err_http, TAG, "couldn't parse info");
 	
 	//First, see if there's a software update.
 	int needs_update=check_fw_update(json);
 	if (needs_update==CHECKFW_NEED_UPDATE) {
 		const char *upd_path=json_get_string(json, "fw_upd");
+		ESP_GOTO_ON_FALSE(upd_path!=NULL, ESP_FAIL, err_http, TAG, "couldn't parse json from info");
 		sprintf(url, "%s%s", BASE_URL, upd_path);
 		ESP_LOGI(TAG, "Doing OTA from %s", url);
-		esp_http_client_set_url(http, url);
-		esp_http_client_open(http, 0);
+		err=esp_http_client_set_url(http, url);
+		ESP_GOTO_ON_ERROR(err, err_httpjs, TAG, "esp_http_client_url to update url failed");
+		err=esp_http_client_open(http, 0);
+		ESP_GOTO_ON_ERROR(err, err_httpjs, TAG, "esp_http_client_open for update url failed");
 		esp_http_client_fetch_headers(http);
 		do_fw_update(http);
-		esp_http_client_close(http);
+		err=esp_http_client_close(http);
+		ESP_GOTO_ON_ERROR(err, err_httpjs, TAG, "esp_http_client_close for update url failed");
 	}
 
 	//Next, save the things we received to flash
@@ -171,13 +196,14 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 		curr_img[i]=-1; //default to invalid
 		server_img[i]=-1;
 	}
-	size_t len=IMG_SLOT_COUNT*sizeof(uint16_t);
+	len=IMG_SLOT_COUNT*sizeof(uint16_t);
 	nvs_get_blob(nvs, "curr_img", curr_img, &len);
 	len=IMG_SLOT_COUNT*sizeof(uint16_t);
 	nvs_get_blob(nvs, "img_shows", img_shows, &len);
 
 	//Parse info we got from server
 	cJSON *js_ids=cJSON_GetObjectItem(json, "images");
+	ESP_GOTO_ON_FALSE(js_ids, ESP_FAIL, err_httpjs, TAG, "no image array in info");
 	for (int i=0; i<IMG_SLOT_COUNT; i++) {
 		cJSON *js_id=cJSON_GetArrayItem(js_ids, i);
 		if (!js_id) continue;
@@ -208,8 +234,10 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 			ESP_LOGI(TAG, "Image ID %d: need to download to slot %d, overwriting image id %d", server_img[i], download_slot, curr_img[download_slot]);
 			esp_partition_erase_range(part, download_slot*IMG_SIZE_BYTES, IMG_SIZE_BYTES);
 			sprintf(url, "%s%s?id=%d", BASE_URL, IMG_PATH, server_img[i]);
-			esp_http_client_set_url(http, url);
-			esp_http_client_open(http, 0);
+			err=esp_http_client_set_url(http, url);
+			ESP_GOTO_ON_ERROR(err, err_httpjs, TAG, "esp_http_client_url to image url failed");
+			err=esp_http_client_open(http, 0);
+			ESP_GOTO_ON_ERROR(err, err_httpjs, TAG, "esp_http_client_open for image url failed");
 			esp_http_client_fetch_headers(http);
 			char buf[1024];
 			int p=download_slot*IMG_SIZE_BYTES;
@@ -220,6 +248,7 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 				p+=len;
 				recved+=len;
 			}
+			ESP_GOTO_ON_FALSE(len>=0, ESP_FAIL, err_http, TAG, "couldn't read image");
 			esp_http_client_close(http);
 			//update curr_img to reflect download
 			curr_img[download_slot]=server_img[i];
@@ -230,6 +259,10 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 	}
 	ESP_LOGI(TAG, "Sync done.");
 
+err_httpjs:
+	cJSON_Delete(json);
+err_http:
 	esp_http_client_cleanup(http);
-	return ESP_OK;
+err_client_alloc:
+	return ret;
 }

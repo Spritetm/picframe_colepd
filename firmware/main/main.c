@@ -18,6 +18,10 @@
 #include "epd_flash_image.h"
 #include "esp_sleep.h"
 #include "sync.h"
+#include "io.h"
+#include "nvs_flash.h"
+#include "esp_ota_ops.h"
+
 
 static const char *TAG="main";
 
@@ -34,35 +38,93 @@ void cb_connection_ok(void *pvParameter){
 	xSemaphoreGive(connect_sema);
 }
 
+
 void app_main(void) {
 	_Static_assert((sizeof(flash_image_t) == IMG_SIZE_BYTES), "flash_image_t not right size");
 	connect_sema=xSemaphoreCreateBinary();
+	io_init();
+	int icon=ICON_NONE;
 
-	/* start the wifi manager */
-	wifi_manager_start();
-	wifi_manager_set_callback(WM_EVENT_STA_GOT_IP, &cb_connection_ok);
+	//Initialize NVS
+	esp_err_t err = nvs_flash_init();
+	if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+		//NVS partition was truncated and needs to be erased. 
+		ESP_ERROR_CHECK(nvs_flash_erase());
+		err = nvs_flash_init(); //Retry nvs_flash_init
+	}
+	ESP_ERROR_CHECK(err);
 
+	//get nvs handle
+	nvs_handle_t nvs;
+	nvs_open("epd", NVS_READWRITE, &nvs);
+
+	//map image partition, we'll need it later
 	const flash_image_t *images=NULL;
 	spi_flash_mmap_handle_t mmap_handle;
 	const esp_partition_t *part=esp_partition_find_first(123, 0, NULL);
 	esp_partition_mmap(part, 0, IMG_SIZE_BYTES*IMG_SLOT_COUNT, SPI_FLASH_MMAP_DATA, (const void**)&images, &mmap_handle);
 
-	nvs_handle_t nvs;
-	nvs_open("epd", NVS_READWRITE, &nvs);
+	//see if we still have enough juice to go online
+	int bat=io_get_battery_mv();
+	int32_t bat_empty_thr=2100; //2.1V
 
-	ESP_LOGI(TAG, "Waiting for connection...");
-	//wait for connection
-	int can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(30*1000));
+	if (bat<bat_empty_thr) {
+		icon=ICON_BAT_EMPTY;
+	} else {
+		//start the wifi manager
+		wifi_manager_start();
+		wifi_manager_set_callback(WM_EVENT_STA_GOT_IP, &cb_connection_ok);
 
-	if (can_connect) {
-		//todo: timeout on this?
-		picframe_sync(images, part);
+		if (io_get_btn()) {
+			wifi_manager_send_message(WM_ORDER_DISCONNECT_STA, NULL);
+			wifi_manager_send_message(WM_ORDER_START_AP, NULL);
+			wifi_manager_send_message(WM_ORDER_START_HTTP_SERVER, NULL);
+			wifi_manager_send_message(WM_ORDER_START_DNS_SERVICE, NULL);
+		}
+
+		//wait for connection
+		ESP_LOGI(TAG, "Waiting for connection...");
+		int can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(30*1000));
+
+		if (can_connect) {
+			//We have a WiFi connection.
+			err=picframe_sync(images, part);
+			if (err==ESP_OK) esp_ota_mark_app_valid_cancel_rollback();
+			if (err!=ESP_OK) icon=ICON_SERVER;
+		} else {
+			icon=ICON_WIFI;
+			//No connection, mayhaps we're in config mode?
+			//If so, wait for a few minutes for the user to do its thing in the
+			//wifi manager UI. We break out either when we have a sta connection or
+			//if the mode is not apsta/ap anymore.
+			int wifi_timeout_sec=3*60;
+			do {
+				wifi_mode_t mode;
+				esp_wifi_get_mode(&mode);
+				if (mode==WIFI_MODE_STA) break;
+
+				can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(1*1000));
+				if (can_connect) break;
+
+				wifi_timeout_sec--;
+				if (wifi_timeout_sec==0) break;
+				ESP_LOGI(TAG, "Delaying shutdown as we're in AP/APSTA mode...");
+			} while(1);
+
+			if (can_connect) {
+				picframe_sync(images, part);
+				if (err==ESP_OK) esp_ota_mark_app_valid_cancel_rollback();
+				if (err!=ESP_OK) icon=ICON_SERVER; else icon=ICON_NONE;
+			}
+		}
+
+		//Assume we're entirely done with WiFi.
+		wifi_manager_destroy();
+		vTaskDelay(pdMS_TO_TICKS(200)); //needed?
+		esp_wifi_stop();
 	}
-	wifi_manager_destroy();
-	vTaskDelay(pdMS_TO_TICKS(200)); //needed?
-	esp_wifi_stop();
 
-	//Grab cur_img and img_shows data
+	//Grab cur_img and img_shows data from NVS
 	int16_t curr_img[IMG_SLOT_COUNT];
 	int16_t img_shows[IMG_SLOT_COUNT]={0};
 	for (int i=0; i<IMG_SLOT_COUNT; i++) curr_img[i]=-1; //default to invalid
@@ -82,16 +144,16 @@ void app_main(void) {
 		}
 	}
 	
+	//Show image we found, if any
 	if (curr_img[img]!=-1) {
 		img_shows[img]++;
 		nvs_set_blob(nvs, "img_shows", img_shows, IMG_SLOT_COUNT*sizeof(uint16_t));
 		
 		ESP_LOGI(TAG, "Displaying img id %d from slot %d", curr_img[img], img);
-
-		epd_send(images[img].data, 0);
-
+		epd_send(images[img].data, icon);
 		epd_shutdown();
 	}
+
 	ESP_LOGI(TAG, "Deep sleep.");
 	//Set timezone
 	char tz[32];
@@ -100,6 +162,7 @@ void app_main(void) {
 		setenv("TZ", tz, 1);
 		tzset();
 	}
+	//Figure out when to wake.
 	int32_t updhour=0;
 	nvs_get_i32(nvs, "upd_hour", &updhour);
 	struct tm tm;
@@ -111,6 +174,12 @@ void app_main(void) {
 	time_t wake=mktime(&tm);
 	int64_t sleep_sec=wake-time(NULL);
 	while (sleep_sec<10) sleep_sec+=(24*60*60); //make sure this is in the future
+
+	if (icon==ICON_BAT_EMPTY) {
+		//Sleep forever.
+		esp_deep_sleep_start();
+	}
+	//Zzzzz....
 	ESP_LOGI(TAG, "Sleeping %lld sec", sleep_sec);
 	esp_sleep_enable_timer_wakeup(sleep_sec*1000ULL*1000ULL);
 	esp_deep_sleep_start();

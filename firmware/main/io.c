@@ -1,0 +1,26 @@
+//Handles the simple IO things, like the button and battery measuring
+#include <driver/adc.h>
+#include <driver/gpio.h>
+
+
+#define PIN_NUM_BTN 10
+
+void io_init() {
+	const gpio_config_t cfg={
+		.pin_bit_mask=(1<<PIN_NUM_BTN),
+		.mode=GPIO_MODE_INPUT,
+		.pull_up_en=GPIO_PULLUP_ENABLE
+	};
+	gpio_config(&cfg);
+}
+
+int io_get_btn() {
+	return !gpio_get_level(PIN_NUM_BTN);
+}
+
+int io_get_battery_mv() {
+	adc1_config_width(ADC_WIDTH_BIT_12);
+	adc1_config_channel_atten(0, ADC_ATTEN_DB_11);
+	int i=(adc1_get_raw(0)*2360)/3276; //battery is IO0/ADC1CH0
+	return i;
+}

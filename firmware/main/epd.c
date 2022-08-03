@@ -150,6 +150,7 @@ static void epd_init(spi_device_handle_t spi) {
 	}
 }
 
+extern const uint8_t icons_bmp_start[] asm("_binary_icons_bmp_start");
 
 spi_device_handle_t spi;
 
@@ -187,9 +188,15 @@ void epd_send(const uint8_t *epddata, int icon) {
 	uint8_t data[4]={0x02, 0x58, 0x01, 0xC0};
 	epd_data(spi, data, 4);
 	epd_cmd(spi, 0x10);
+	int bmp_pix_start=icons_bmp_start[0xa]+(icons_bmp_start[0xb]<<8); //actually header is 32-bit... care.
+	ESP_LOGI(TAG, "bmp starts at 0x%X", bmp_pix_start);
 	for (int y=0; y<448; y++) {
 		uint8_t buf[300];
 		memcpy(buf, &epddata[y*300], 300);
+		if (icon!=0 && y<32) {
+			//the bmp is a file with 4-bit info. Each icon is 32x32 pixels (aka 32x16 bytes)
+			memcpy(buf, &icons_bmp_start[bmp_pix_start+y*16+(icon-1)*(16*32)], 16);
+		}
 		epd_data(spi, buf, 300);
 	}
 	epd_cmd(spi, 0x4);
