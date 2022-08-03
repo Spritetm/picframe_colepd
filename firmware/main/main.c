@@ -15,80 +15,11 @@
 #include "esp_http_client.h"
 #include "nvs.h"
 #include "epd.h"
+#include "epd_flash_image.h"
 #include "esp_sleep.h"
+#include "sync.h"
 
-const char *TAG="main";
-
-typedef struct __attribute__((packed)) {
-	uint32_t id;
-	uint64_t timestamp;
-	uint8_t unused[64-12];
-} flash_image_hdr_t;
-
-typedef struct __attribute__((packed)) {
-	flash_image_hdr_t hdr;
-	uint8_t data[600*448/2];
-	uint8_t padding[768-sizeof(flash_image_hdr_t)];
-} flash_image_t;
-
-#define IMG_SLOT_COUNT 10
-#define IMG_SIZE_BYTES 0x21000
-
-int img_valid(const flash_image_hdr_t *img) {
-	return (img->id==0xfafa1a1a);
-}
-
-int fetch_new_image(const flash_image_t *images, const esp_partition_t *part) {
-	//If we have a connection, try to grab a new picture
-	ESP_LOGI(TAG, "Fetching new image...");
-	const esp_http_client_config_t config={
-		.url="http://192.168.5.5/epd/epd-img.php",
-	};
-	esp_http_client_handle_t http=esp_http_client_init(&config);
-	esp_http_client_open(http, 0);
-	esp_http_client_fetch_headers(http);
-	flash_image_hdr_t hdr;
-	esp_http_client_read(http, (char*)&hdr, sizeof(hdr));
-	for (int i=0; i<IMG_SLOT_COUNT; i++) {
-		if (images[i].hdr.timestamp == hdr.timestamp) {
-			//Already have that image.
-			ESP_LOGI(TAG, "Already have image.");
-			esp_http_client_close(http);
-			esp_http_client_cleanup(http);
-			return -1;
-		}
-	}
-
-	//We do not have that yet. Find oldest slot and erase.
-	int oldest=0;
-	for (int i=0; i<IMG_SLOT_COUNT; i++) {
-		if (images[i].hdr.timestamp < images[oldest].hdr.timestamp) oldest=i;
-		if (!img_valid(&images[i].hdr)) {
-			//erased, use immediately
-			oldest=i;
-			break;
-		}
-	}
-	ESP_LOGI(TAG, "Saving image to slot %d", oldest);
-	esp_partition_erase_range(part, oldest*IMG_SIZE_BYTES, IMG_SIZE_BYTES);
-	char buf[1024];
-	int p=oldest*IMG_SIZE_BYTES+sizeof(flash_image_hdr_t);
-	int len;
-	int recved=0;
-	while ((len=esp_http_client_read(http, buf, sizeof(buf)))>0) {
-		esp_partition_write(part, p, buf, len);
-		p+=len;
-		recved+=len;
-	}
-	//write header after all else is succesfully done.
-	esp_partition_write(part, oldest*IMG_SIZE_BYTES, &hdr, sizeof(hdr));
-
-	ESP_LOGI(TAG, "Saved %d bytes.", recved);
-	esp_http_client_close(http);
-	esp_http_client_cleanup(http);
-	return oldest;
-}
-
+static const char *TAG="main";
 
 SemaphoreHandle_t connect_sema;
 
@@ -108,7 +39,7 @@ void app_main(void) {
 	connect_sema=xSemaphoreCreateBinary();
 
 	/* start the wifi manager */
-//	wifi_manager_start();
+	wifi_manager_start();
 	wifi_manager_set_callback(WM_EVENT_STA_GOT_IP, &cb_connection_ok);
 
 	const flash_image_t *images=NULL;
@@ -117,36 +48,70 @@ void app_main(void) {
 	esp_partition_mmap(part, 0, IMG_SIZE_BYTES*IMG_SLOT_COUNT, SPI_FLASH_MMAP_DATA, (const void**)&images, &mmap_handle);
 
 	nvs_handle_t nvs;
-	nvs_open("img", NVS_READWRITE, &nvs);
+	nvs_open("epd", NVS_READWRITE, &nvs);
 
 	ESP_LOGI(TAG, "Waiting for connection...");
 	//wait for connection
-//	int can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(30*1000));
-	int can_connect=0;
+	int can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(30*1000));
 
-	int32_t to_display=-1;
 	if (can_connect) {
-		to_display=fetch_new_image(images, part);
-		if (to_display>=0) nvs_set_i32(nvs, "l", to_display);
+		//todo: timeout on this?
+		picframe_sync(images, part);
 	}
-//	wifi_manager_destroy();
-//	vTaskDelay(pdMS_TO_TICKS(200)); //needed?
-//	esp_wifi_stop();
+	wifi_manager_destroy();
+	vTaskDelay(pdMS_TO_TICKS(200)); //needed?
+	esp_wifi_stop();
 
-	if (to_display==-1) {
-		nvs_get_i32(nvs, "l", &to_display);
-		do {
-			to_display++;
-			if (to_display<0 || to_display>=IMG_SLOT_COUNT) to_display=0;
-		} while (img_valid(&images[to_display].hdr));
+	//Grab cur_img and img_shows data
+	int16_t curr_img[IMG_SLOT_COUNT];
+	int16_t img_shows[IMG_SLOT_COUNT]={0};
+	for (int i=0; i<IMG_SLOT_COUNT; i++) curr_img[i]=-1; //default to invalid
+	size_t len=IMG_SLOT_COUNT*sizeof(uint16_t);
+	nvs_get_blob(nvs, "curr_img", curr_img, &len);
+	len=IMG_SLOT_COUNT*sizeof(uint16_t);
+	nvs_get_blob(nvs, "img_shows", img_shows, &len);
+
+	//Find the image that is valid with the highest ID and lowest count
+	int img=0;
+	for (int i=1; i<IMG_SLOT_COUNT; i++) {
+		if (curr_img[i]==-1) continue; //invalid
+		if (img_shows[i]<img_shows[img]) {
+			img=i;
+		} else if (img_shows[i]==img_shows[img]) {
+			if (curr_img[i]>curr_img[img]) img=i;
+		}
 	}
-	ESP_LOGI(TAG, "Displaying img from slot %d", to_display);
+	
+	if (curr_img[img]!=-1) {
+		img_shows[img]++;
+		nvs_set_blob(nvs, "img_shows", img_shows, IMG_SLOT_COUNT*sizeof(uint16_t));
+		
+		ESP_LOGI(TAG, "Displaying img id %d from slot %d", curr_img[img], img);
 
-	epd_send(images[to_display].data, 0);
+		epd_send(images[img].data, 0);
 
-
-	epd_shutdown();
+		epd_shutdown();
+	}
 	ESP_LOGI(TAG, "Deep sleep.");
-	esp_sleep_enable_timer_wakeup(60*1000*1000);
+	//Set timezone
+	char tz[32];
+	len=sizeof(tz);
+	if (nvs_get_str(nvs, "tz", tz, &len)==ESP_OK) {
+		setenv("TZ", tz, 1);
+		tzset();
+	}
+	int32_t updhour=0;
+	nvs_get_i32(nvs, "upd_hour", &updhour);
+	struct tm tm;
+	time_t now=time(NULL);
+	localtime_r(&now, &tm);
+	ESP_LOGI(TAG, "Now is %d:%02d, sleeping till %d:00", tm.tm_hour, tm.tm_min, updhour);
+	tm.tm_hour=updhour;
+	tm.tm_min=0;
+	time_t wake=mktime(&tm);
+	int64_t sleep_sec=wake-time(NULL);
+	while (sleep_sec<10) sleep_sec+=(24*60*60); //make sure this is in the future
+	ESP_LOGI(TAG, "Sleeping %lld sec", sleep_sec);
+	esp_sleep_enable_timer_wakeup(sleep_sec*1000ULL*1000ULL);
 	esp_deep_sleep_start();
 }

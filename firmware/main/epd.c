@@ -154,6 +154,9 @@ static void epd_init(spi_device_handle_t spi) {
 spi_device_handle_t spi;
 
 void epd_send(const uint8_t *epddata, int icon) {
+	gpio_hold_dis(PIN_NUM_CS);
+	gpio_hold_dis(PIN_NUM_RST);
+
 	/* initialize epd */
 	esp_err_t ret;
 	spi_bus_config_t buscfg={
@@ -180,7 +183,6 @@ void epd_send(const uint8_t *epddata, int icon) {
 	//Initialize the EPD
 	epd_init(spi);
 	
-#if 0
 	epd_cmd(spi, 0x61);
 	uint8_t data[4]={0x02, 0x58, 0x01, 0xC0};
 	epd_data(spi, data, 4);
@@ -194,7 +196,6 @@ void epd_send(const uint8_t *epddata, int icon) {
 	wait_busy(1, 30000);
 	epd_cmd(spi, 0x12);
 	wait_busy(1, 30000);
-#endif
 	epd_cmd(spi, 0x2);
 	wait_busy(1, 30000);
 	ESP_LOGI(TAG, "Displayed image.");
