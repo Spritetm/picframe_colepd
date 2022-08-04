@@ -1,5 +1,5 @@
 
-CFLAGS=-ggdb
+CFLAGS=-ggdb -O2
 LDFLAGS=-lgd -lm
 
 conv: conv.o

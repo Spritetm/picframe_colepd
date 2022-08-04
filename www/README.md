@@ -7,3 +7,11 @@ How to do this:
 - Create database 'epd', grant user 'epd' all permissions
 - Create the structure:
   mysql -u epd -p epd < create-database.sql
+
+This also needs a image -> EPD binary program that is written in C to work. This
+needs to be compiled. To do so:
+- Make sure gcc and make are installed on the host
+- Install libgd-dev (the development package for libgd)
+- cd conv; make
+- Make sure php is allowed to run unix executables
+
