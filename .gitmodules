@@ -3,4 +3,4 @@
 	url = https://github.com/fengyuanchen/cropperjs.git
 [submodule "firmware/components/esp32-wifi-manager"]
 	path = firmware/components/esp32-wifi-manager
-	url = git@github.com:Spritetm/esp32-wifi-manager.git
+	url = "https://github.com/Spritetm/esp32-wifi-manager.git"
