@@ -1,0 +1,10 @@
+menu "Photoframe Configuration"
+
+	config PHOTOFRAME_BASE_URL
+		string "Base URL"
+		default "http://example.com/"
+		help
+			Base URL. Points to a http (not https) URL where the epd-info.php etc files can be found.
+			Note that this MUST end with a / character!
+	
+endmenu

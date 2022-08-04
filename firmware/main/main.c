@@ -76,9 +76,13 @@ void app_main(void) {
 		wifi_manager_set_callback(WM_EVENT_STA_GOT_IP, &cb_connection_ok);
 
 		if (io_get_btn()) {
+			vTaskDelay(pdMS_TO_TICKS(200));
 			wifi_manager_send_message(WM_ORDER_DISCONNECT_STA, NULL);
+			vTaskDelay(pdMS_TO_TICKS(200));
 			wifi_manager_send_message(WM_ORDER_START_AP, NULL);
+			vTaskDelay(pdMS_TO_TICKS(200));
 			wifi_manager_send_message(WM_ORDER_START_HTTP_SERVER, NULL);
+			vTaskDelay(pdMS_TO_TICKS(200));
 			wifi_manager_send_message(WM_ORDER_START_DNS_SERVICE, NULL);
 		}
 

@@ -66,8 +66,25 @@ if (render==1) {
     //translate(-pcb_center) pcb();
     //translate([0,0,pcb_size.z]) color("beige") mat();
     //case_top();
-    case_bottom();
+    //case_bottom();
     //battery_lid();
+}
+
+button("R");
+translate([10,10,0]) button("C");
+
+module button(txt) {
+    difference() {
+        union() {
+            cylinder(h=8, d=btn_d-tolerance*2);
+            cylinder(h=2, d=btn_d+case_th*2);
+            translate([-(case_th-tolerance*2)/2,0,0]) cube([(case_th-tolerance*2),btn_d/2+case_th,5]);
+        }
+        translate([0,0,-1]) cylinder(h=3.5, d=4.5);
+        translate([-3,-3,7.5])linear_extrude(height = 1) {
+            text(txt, font = "Liberation Sans:style=Bold",size=6);
+        }
+    }
 }
 
 module pcb() {

@@ -20,10 +20,11 @@
 #include "mbedtls/base64.h"
 #include "sync.h"
 #include "io.h"
+#include "sdkconfig.h"
 
 static const char *TAG="sync";
 
-#define BASE_URL "http://192.168.5.5/epd/"
+#define BASE_URL CONFIG_PHOTOFRAME_BASE_URL
 #define INFO_PATH "epd-info.php"
 #define IMG_PATH "epd-img.php"
 
