@@ -255,11 +255,11 @@ int main(int argc, char **argv) {
 	float epd_colors[7][3]={ //rgb
 		{0,0,0},
 		{1,1,1},
-		{0.07, 0.41, 0.09},
-		{0.30, 0.25, 0.75},
-		{0.63, 0.06, 0.07},
-		{0.98, 0.92, 0.24},
-		{0.89, 0.51, 0.14}
+		{0.059, 0.329, 0.119},
+		{0.061, 0.147, 0.336},
+		{0.574, 0.066, 0.010},
+		{0.982, 0.756, 0.004},
+		{0.795, 0.255, 0.018},
 	};
 
 	//Convert float RGB colors to int colors for putting on the preview png
@@ -273,7 +273,7 @@ int main(int argc, char **argv) {
 		epd_colors_int[i]=c;
 	}
 
-	//Convert image to an array of floats so we can Ffloyd-Steinberg without limiting ourselves
+	//Convert image to an array of floats so we can Floyd-Steinberg without limiting ourselves
 	//to the range of ints
 	float *pixels=calloc(EPD_W*EPD_H*3, sizeof(float));
 	assert(pixels);
@@ -312,6 +312,7 @@ int main(int argc, char **argv) {
 				dist_diff(pixels, x, y+1, i, (dif/16.0)*5.0);
 				dist_diff(pixels, x+1, y+1, i, (dif/16.0)*1.0);
 			}
+//			best=((x*14)/448)%7; //uncomment for test image
 			//Set byte in output EPD binary data
 #if EPD_UPSIDE_DOWN
 			if (x&1) {
