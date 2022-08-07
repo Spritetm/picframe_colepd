@@ -23,5 +23,15 @@ img size 134464
 11 images -> 10 150000
 
 
+Case uses M3 inserts: height 4mm dia 5mm
+Corresponding screws: M3*6mm
 
+
+Colors:
+- Grab picture in 'normal' situation (daylight, curtains, ...)
+- Open in Gimp
+- Image -> precision: 16-bit, linear
+- Filters -> blur (to get rid of grain)
+- Curve -> make darker colors a bit more dark (so it mixes more white in there, making end image lighter)
+- Filters -> levels, select black level, select white level
 

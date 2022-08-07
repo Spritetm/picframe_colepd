@@ -66,12 +66,13 @@ if (render==1) {
     //translate(-pcb_center) pcb();
     //translate([0,0,pcb_size.z]) color("beige") mat();
     //case_top();
-    //case_bottom();
+    case_bottom();
     //battery_lid();
+} else if (render==3) {
+    button("R");
+    translate([10,10,0]) button("C");
 }
 
-button("R");
-translate([10,10,0]) button("C");
 
 module button(txt) {
     difference() {
@@ -154,7 +155,7 @@ module case_bot_fancy(pullback) {
         translate([-100, pcb_center.y-bat_plus_pos.y+bat_dia/2, h-pullback]) rotate([-5,0,0]) cube([200,200,20]);
         //beveled at battery
         translate([-100, pcb_center.y-bat_plus_pos.y-bat_dia/2, h-pullback]) rotate([30,0,0]) translate([0,-200,0]) cube([200,200,20]);
-
+        //beveled edges
         translate([case_size.x/2,-case_size.y/2-tolerance,edge_off-pullback]) rotate([0,50,0]) translate([-100,-tolerance*2,0]) cube([100,case_size.y+tolerance*4,case_size.z,]);
         translate([-case_size.x/2,case_size.y/2-tolerance,edge_off-pullback]) rotate([0,50,180]) translate([-100,-tolerance*2,0]) cube([100,case_size.y+tolerance*4,case_size.z,]);
 
@@ -250,8 +251,15 @@ module case_bottom() {
                 translate([0,0,-10]) support(case_th);
             }
             for (pos=btns) {
-                translate(pos-pcb_center-[0,0,20]) cylinder(d=btn_d+case_th*2, h=10);
+                translate(pos-pcb_center-[0,0,20]) difference() {
+                    //button hole
+                    cylinder(d=btn_d+case_th*2, h=10);
+                    //slot
+                    rotate([0,0,-90]) translate([0,-case_th/2,0]) cube([btn_d+case_th*3, case_th,11]);
+                }
             }
+            //support in center of case back
+            translate([0,0,-20]) cylinder(h=20,d=8);
         }
         for (pos=btns) {
             translate(pos-pcb_center-[0,0,20]) cylinder(d=btn_d+tolerance*2, h=20);

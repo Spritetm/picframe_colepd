@@ -32,8 +32,13 @@ static const char *TAG="sync";
 #define CHECKFW_NEED_UPDATE 1
 #define CHECKFW_ERR 2
 
-static void get_app_sha(uint8_t *sha) {
-	const esp_partition_t *runpart=esp_ota_get_running_partition();
+static void get_app_sha(uint8_t *sha, int for_ota_part) {
+	const esp_partition_t *runpart;
+	if (!for_ota_part) {
+		runpart=esp_ota_get_running_partition();
+	} else {
+		runpart=esp_ota_get_next_update_partition(NULL);
+	}
 	esp_app_desc_t runappinfo;
 	esp_ota_get_partition_description(runpart, &runappinfo);
 	memcpy(sha, runappinfo.app_elf_sha256, 32);
@@ -50,13 +55,18 @@ static int check_fw_update(cJSON *json) {
 	if (olen!=32) return CHECKFW_ERR;
 
 	uint8_t cur_sha[32];
-	get_app_sha(cur_sha);
+	get_app_sha(cur_sha, 0);
 
 	if (memcmp(cur_sha, sha, 32)==0) {
 		ESP_LOGI(TAG, "Firmware still up to date.");
 		return CHECKFW_OK;
 	} else {
 		ESP_LOGI(TAG, "Firmware needs update.");
+		get_app_sha(cur_sha, 1);
+		if (memcmp(cur_sha, sha, 32)==0) {
+			ESP_LOGI(TAG, "...but the update was previously attempted and failed");
+			return CHECKFW_OK;
+		}
 		return CHECKFW_NEED_UPDATE;
 	}
 }
@@ -127,7 +137,7 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 	esp_base_mac_addr_get(mac);
 	int bat_pwr=io_get_battery_mv();
 	uint8_t cur_sha[32];
-	get_app_sha(cur_sha);
+	get_app_sha(cur_sha, 0);
 	char cur_sha_text[16];
 	for (int i=0; i<8; i++) sprintf(&cur_sha_text[i*2], "%02X", cur_sha[i]);
 	sprintf(url, "%s%s?mac=%02X%02X%02X%02X%02X%02X&bat=%d&fw=%s", BASE_URL, INFO_PATH, 

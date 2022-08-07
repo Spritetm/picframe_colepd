@@ -17,11 +17,11 @@
 #include "epd.h"
 #include "epd_flash_image.h"
 #include "esp_sleep.h"
+#include "esp_timer.h"
 #include "sync.h"
 #include "io.h"
 #include "nvs_flash.h"
 #include "esp_ota_ops.h"
-
 
 static const char *TAG="main";
 
@@ -38,12 +38,28 @@ void cb_connection_ok(void *pvParameter){
 	xSemaphoreGive(connect_sema);
 }
 
+void shutdown_callback(void *arg) {
+	ESP_LOGW(TAG, "Alive for too long! Sleeping.");
+	esp_sleep_enable_timer_wakeup(60*60*1000ULL*1000ULL);
+	esp_deep_sleep_start();
+}
+
 
 void app_main(void) {
 	_Static_assert((sizeof(flash_image_t) == IMG_SIZE_BYTES), "flash_image_t not right size");
 	connect_sema=xSemaphoreCreateBinary();
 	io_init();
 	int icon=ICON_NONE;
+
+	//make sure we shut down after 10 mins guaranteed
+	esp_timer_create_args_t config={
+		.callback=shutdown_callback,
+		.name="shutdown",
+		.skip_unhandled_events=true
+	};
+	esp_timer_handle_t handle;
+	esp_timer_create(&config, &handle);
+	esp_timer_start_periodic(handle, 10*60*1000ULL*1000ULL);
 
 	//Initialize NVS
 	esp_err_t err = nvs_flash_init();
@@ -66,7 +82,8 @@ void app_main(void) {
 
 	//see if we still have enough juice to go online
 	int bat=io_get_battery_mv();
-	int32_t bat_empty_thr=2100; //2.1V
+	int32_t bat_empty_thr=2250;
+	ESP_LOGI(TAG, "Battery at %d mV before going online...", bat);
 
 	if (bat<bat_empty_thr) {
 		icon=ICON_BAT_EMPTY;
@@ -85,40 +102,44 @@ void app_main(void) {
 			vTaskDelay(pdMS_TO_TICKS(200));
 			wifi_manager_send_message(WM_ORDER_START_DNS_SERVICE, NULL);
 		}
-
 		//wait for connection
-		ESP_LOGI(TAG, "Waiting for connection...");
+		ESP_LOGI(TAG, "Waiting for connection...x");
 		int can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(30*1000));
-
-		if (can_connect) {
-			//We have a WiFi connection.
-			err=picframe_sync(images, part);
-			if (err==ESP_OK) esp_ota_mark_app_valid_cancel_rollback();
-			if (err!=ESP_OK) icon=ICON_SERVER;
+		int bat=io_get_battery_mv();
+		ESP_LOGI(TAG, "Battery at %d mV after WiFi init", bat);
+		if (bat<bat_empty_thr) {
+			icon=ICON_BAT_EMPTY;
 		} else {
-			icon=ICON_WIFI;
-			//No connection, mayhaps we're in config mode?
-			//If so, wait for a few minutes for the user to do its thing in the
-			//wifi manager UI. We break out either when we have a sta connection or
-			//if the mode is not apsta/ap anymore.
-			int wifi_timeout_sec=3*60;
-			do {
-				wifi_mode_t mode;
-				esp_wifi_get_mode(&mode);
-				if (mode==WIFI_MODE_STA) break;
-
-				can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(1*1000));
-				if (can_connect) break;
-
-				wifi_timeout_sec--;
-				if (wifi_timeout_sec==0) break;
-				ESP_LOGI(TAG, "Delaying shutdown as we're in AP/APSTA mode...");
-			} while(1);
-
 			if (can_connect) {
-				picframe_sync(images, part);
+				//We have a WiFi connection.
+				err=picframe_sync(images, part);
 				if (err==ESP_OK) esp_ota_mark_app_valid_cancel_rollback();
-				if (err!=ESP_OK) icon=ICON_SERVER; else icon=ICON_NONE;
+				if (err!=ESP_OK) icon=ICON_SERVER;
+			} else {
+				icon=ICON_WIFI;
+				//No connection, mayhaps we're in config mode?
+				//If so, wait for a few minutes for the user to do its thing in the
+				//wifi manager UI. We break out either when we have a sta connection or
+				//if the mode is not apsta/ap anymore.
+				int wifi_timeout_sec=3*60;
+				do {
+					wifi_mode_t mode;
+					esp_wifi_get_mode(&mode);
+					if (mode==WIFI_MODE_STA) break;
+
+					can_connect=xSemaphoreTake(connect_sema, pdMS_TO_TICKS(1*1000));
+					if (can_connect) break;
+
+					wifi_timeout_sec--;
+					if (wifi_timeout_sec==0) break;
+					ESP_LOGI(TAG, "Delaying shutdown as we're in AP/APSTA mode...");
+				} while(1);
+
+				if (can_connect) {
+					err=picframe_sync(images, part);
+					if (err==ESP_OK) esp_ota_mark_app_valid_cancel_rollback();
+					if (err!=ESP_OK) icon=ICON_SERVER; else icon=ICON_NONE;
+				}
 			}
 		}
 
@@ -172,7 +193,7 @@ void app_main(void) {
 	struct tm tm;
 	time_t now=time(NULL);
 	localtime_r(&now, &tm);
-	ESP_LOGI(TAG, "Now is %d:%02d, sleeping till %d:00", tm.tm_hour, tm.tm_min, updhour);
+	ESP_LOGI(TAG, "Now is %d:%02d, sleeping till %ld:00", tm.tm_hour, tm.tm_min, updhour);
 	tm.tm_hour=updhour;
 	tm.tm_min=0;
 	time_t wake=mktime(&tm);
