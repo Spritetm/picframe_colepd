@@ -24,7 +24,12 @@ while(!feof($convproc)) {
 $stmt->send_long_data(1, $bin);
 $stmt->execute() || die($stmt->error);
 
-pclose($convproc);
+$ret=pclose($convproc);
+
+if ($ret!=0) {
+	unlink($pngfile);
+	exit(1);
+}
 
 //header("Content-Type: image/png");
 //readfile($pngfile);

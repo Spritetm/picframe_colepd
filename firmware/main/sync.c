@@ -1,3 +1,9 @@
+
+/*
+This code syncs the state of the picture frame (firmware, images in memory, config) to
+what the server thinks it should be.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,6 +133,7 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 	esp_err_t ret=ESP_OK;
 	const esp_http_client_config_t config={
 		.url=BASE_URL,
+		.timeout_ms=16000,
 	};
 	esp_http_client_handle_t http=esp_http_client_init(&config);
 	ESP_GOTO_ON_FALSE(http, ESP_ERR_NO_MEM, err_client_alloc, TAG, "couldn't init http client");
@@ -242,6 +249,10 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 					break;
 				}
 			}
+			//Mark slot as invalid, in case the download fails
+			curr_img[download_slot]=-1; //invalid
+			nvs_set_blob(nvs, "curr_img", curr_img, IMG_SLOT_COUNT*sizeof(uint16_t));
+			//Download image to flash partition.
 			ESP_LOGI(TAG, "Image ID %d: need to download to slot %d, overwriting image id %d", server_img[i], download_slot, curr_img[download_slot]);
 			esp_partition_erase_range(part, download_slot*IMG_SIZE_BYTES, IMG_SIZE_BYTES);
 			sprintf(url, "%s%s?id=%d", BASE_URL, IMG_PATH, server_img[i]);
@@ -261,15 +272,19 @@ esp_err_t picframe_sync(const flash_image_t *images, const esp_partition_t *part
 			}
 			ESP_GOTO_ON_FALSE(len>=0, ESP_FAIL, err_http, TAG, "couldn't read image");
 			esp_http_client_close(http);
-			//update curr_img to reflect download
-			curr_img[download_slot]=server_img[i];
-			img_shows[download_slot]=0;
-			nvs_set_blob(nvs, "curr_img", curr_img, IMG_SLOT_COUNT*sizeof(uint16_t));
-			nvs_set_blob(nvs, "img_shows", img_shows, IMG_SLOT_COUNT*sizeof(uint16_t));
+			if (recved<sizeof(flash_image_hdr_t)+(600*448/2)) {
+				//Not sure what happened here... download succeeded but was too small. Server error?
+				ESP_LOGW(TAG, "Image data too short. Not marking image as valid.");
+			} else {
+				//update curr_img to reflect download
+				curr_img[download_slot]=server_img[i];
+				img_shows[download_slot]=0;
+				nvs_set_blob(nvs, "curr_img", curr_img, IMG_SLOT_COUNT*sizeof(uint16_t));
+				nvs_set_blob(nvs, "img_shows", img_shows, IMG_SLOT_COUNT*sizeof(uint16_t));
+			}
 		}
 	}
 	ESP_LOGI(TAG, "Sync done.");
-
 err_httpjs:
 	cJSON_Delete(json);
 err_http:

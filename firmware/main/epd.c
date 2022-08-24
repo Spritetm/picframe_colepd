@@ -9,6 +9,7 @@
 #include "esp_timer.h"
 
 #ifdef HSPI_HOST
+//Waveshare ESP32 board
 #define EPD_HOST	HSPI_HOST
 #define PIN_NUM_BUSY 25
 #define PIN_NUM_MOSI 14
@@ -17,6 +18,7 @@
 #define PIN_NUM_RST	 26
 #define PIN_NUM_DC	 27
 #else
+//Actual picframe_epd board.
 #define EPD_HOST	SPI2_HOST
 #define PIN_NUM_BUSY 4
 #define PIN_NUM_MOSI 9
@@ -189,7 +191,7 @@ void epd_send(const uint8_t *epddata, int icon) {
 	epd_data(spi, data, 4);
 	epd_cmd(spi, 0x10);
 	int bmp_pix_start=icons_bmp_start[0xa]+(icons_bmp_start[0xb]<<8); //actually header is 32-bit... care.
-	ESP_LOGI(TAG, "bmp starts at 0x%X", bmp_pix_start);
+	//ESP_LOGI(TAG, "bmp starts at 0x%X", bmp_pix_start);
 	for (int y=0; y<448; y++) {
 		uint8_t buf[300];
 		memcpy(buf, &epddata[y*300], 300);

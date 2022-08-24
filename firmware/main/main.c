@@ -179,7 +179,7 @@ void app_main(void) {
 		epd_shutdown();
 	}
 
-	ESP_LOGI(TAG, "Deep sleep.");
+	ESP_LOGI(TAG, "Going to sleep.");
 	//Set timezone
 	char tz[32];
 	len=sizeof(tz);
@@ -198,14 +198,18 @@ void app_main(void) {
 	tm.tm_min=0;
 	time_t wake=mktime(&tm);
 	int64_t sleep_sec=wake-time(NULL);
-	while (sleep_sec<10) sleep_sec+=(24*60*60); //make sure this is in the future
+	//Make sure this is in the future. We can wake up a bit before the wake time, and without
+	//this, it would sleep only a short while until the actual wake time.
+	while (sleep_sec<(10*60)) sleep_sec+=(24*60*60);
 
 	if (icon==ICON_BAT_EMPTY) {
 		//Sleep forever.
+		ESP_LOGI(TAG, "Low battery, so sleeping forever.");
 		esp_deep_sleep_start();
 	}
 	//Zzzzz....
 	ESP_LOGI(TAG, "Sleeping %lld sec", sleep_sec);
 	esp_sleep_enable_timer_wakeup(sleep_sec*1000ULL*1000ULL);
+	vTaskDelay(pdMS_TO_TICKS(100));
 	esp_deep_sleep_start();
 }

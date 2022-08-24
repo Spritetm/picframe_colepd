@@ -356,5 +356,6 @@ int main(int argc, char **argv) {
 		//Write binary output to stdout
 		fwrite(bin, sizeof(flash_image_t)-sizeof(bin->padding), 1, stdout);
 	}
+	exit(0);
 }
 
