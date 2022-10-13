@@ -4,6 +4,13 @@ Return JSON with the state we expect the EPD controller to be in: what firmware 
 to have and what images are supposed to be in its memory. We also record the battery voltage.
 
 Called using GET: epd-info.php?mac=01234567&bat=2901
+
+ * ----------------------------------------------------------------------------
+ * "THE BEER-WARE LICENSE" (Revision 42):
+ * Jeroen Domburg <jeroen@spritesmods.com> wrote this file. As long as you retain 
+ * this notice you can do whatever you want with this stuff. If we meet some day, 
+ * and you think this stuff is worth it, you can buy me a beer in return. 
+ * ----------------------------------------------------------------------------
 */
 require("config.php");
 

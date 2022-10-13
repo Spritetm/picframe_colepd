@@ -1,5 +1,15 @@
 //Handles the simple IO things, like the button and battery measuring
 
+/*
+ * ----------------------------------------------------------------------------
+ * "THE BEER-WARE LICENSE" (Revision 42):
+ * Jeroen Domburg <jeroen@spritesmods.com> wrote this file. As long as you retain 
+ * this notice you can do whatever you want with this stuff. If we meet some day, 
+ * and you think this stuff is worth it, you can buy me a beer in return. 
+ * ----------------------------------------------------------------------------
+*/
+
+
 #include <esp_adc/adc_oneshot.h>
 #include <esp_adc/adc_cali_scheme.h>
 #include <driver/gpio.h>
