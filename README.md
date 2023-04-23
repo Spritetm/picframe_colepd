@@ -1,37 +1,16 @@
 
-* Workflow
-Uploading:
-- html/js: select image, crop, resize, upload to server
-- upload php: use C program to convert to EPD.
-  Spit out preview (?), add epd to database w/ timestamp
+### What is this?
 
-epd:
-- Wake up
-If Internet:
- * fetch index JSON file (contains OTA plus timestamps of last 10 images)
- * Update files to make internal store match 
- * Update list of image shows: set to 0 for new images
-- Take list of image shows; get lowest show count; show newest image with that count.
+This is the firmware, PCB artwork, schematics and case design for a WiFi-enabled color picture frame.
 
-Flash:
-Other shit: 0x10000
-OTA1: 0x150000
-OTA2: 0x150000
-left: 0x150000
+### Contents
 
-img size 134464
-11 images -> 10 150000
+- case - OpenSCAD program to build the case. Change the 'render' variable to render the various parts.
+- www - PHP and C program running on the server that is used to upload/fetch the pictures.
+- firmware - ESP32C3 firmware. Make sure to run menuconfig to point this at your server.
+- pcb - Schematics and PCB artwork, in Kicad format.
 
+### More information
 
-Case uses M3 inserts: height 4mm dia 5mm
-Corresponding screws: M3*6mm
-
-
-Colors:
-- Grab picture in 'normal' situation (daylight, curtains, ...)
-- Open in Gimp
-- Image -> precision: 16-bit, linear
-- Filters -> blur (to get rid of grain)
-- Curve -> make darker colors a bit more dark (so it mixes more white in there, making end image lighter)
-- Filters -> levels, select black level, select white level
+[Article on Spritesmods](https://spritesmods.com/?art=wifipicframe)
 
